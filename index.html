@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prompt Generator — Rakit prompt untuk teks, kode, gambar, video</title>
+  <meta name="description" content="Generator prompt serbaguna: teks, coding, gambar, video, dan audio. Jalan offline di browser, tanpa server, tanpa akun.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚡</span>
+      <span>
+        Prompt Generator
+        <small>rakit prompt untuk apa saja</small>
+      </span>
+    </div>
+
+    <div class="search-wrap">
+      <span class="ico">🔍</span>
+      <input id="search" type="search" placeholder="Cari template…  (Ctrl+K)" autocomplete="off">
+    </div>
+
+    <div class="spacer"></div>
+
+    <button class="btn ghost icon" id="helpBtn" title="Cara pakai">❔</button>
+    <button class="btn ghost icon" id="themeBtn" title="Ganti tema">☀️</button>
+    <button class="btn ghost icon" id="settingsBtn" title="Pengaturan">⚙️</button>
+  </header>
+
+  <div class="mob-tabs" id="mobTabs">
+    <button class="tab" data-mob="sidebar">Template</button>
+    <button class="tab on" data-mob="workspace">Isi</button>
+    <button class="tab" data-mob="pane">Hasil</button>
+  </div>
+
+  <div class="main">
+    <nav class="sidebar" id="sidebar"></nav>
+
+    <main class="workspace" id="workspace"></main>
+
+    <aside class="pane" id="pane">
+      <div class="pane-head">
+        <div class="tabs" id="paneTabs">
+          <button class="tab on" data-tab="preview">Pratinjau</button>
+          <button class="tab" data-tab="quality">Kualitas</button>
+          <button class="tab" data-tab="library">Pustaka</button>
+        </div>
+      </div>
+      <div class="pane-body" id="paneBody"></div>
+      <div class="pane-foot" id="paneFoot"></div>
+    </aside>
+  </div>
+
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<!-- Inti -->
+<script src="assets/js/core/registry.js"></script>
+<script src="assets/js/core/composer.js"></script>
+<script src="assets/js/core/quality.js"></script>
+<script src="assets/js/core/store.js"></script>
+<script src="assets/js/core/ai.js"></script>
+
+<!-- Data: tambahkan file kategori baru di bawah ini -->
+<script src="assets/js/data/modifiers.js"></script>
+<script src="assets/js/data/text.js"></script>
+<script src="assets/js/data/code.js"></script>
+<script src="assets/js/data/image.js"></script>
+<script src="assets/js/data/video.js"></script>
+
+<!-- Antarmuka -->
+<script src="assets/js/ui/components.js"></script>
+<script src="assets/js/ui/app.js"></script>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    try {
+      PG.app.init();
+    } catch (e) {
+      console.error(e);
+      document.getElementById('workspace').innerHTML =
+        '<div class="card"><h3>Gagal memuat</h3><pre style="white-space:pre-wrap">' +
+        String(e && e.stack || e) + '</pre></div>';
+    }
+  });
+</script>
+
+</body>
+</html>

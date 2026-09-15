@@ -1,0 +1,20 @@
+# Dependensi (proyek ini tidak memakainya, jaga-jaga bila nanti ditambah)
+node_modules/
+
+# Berkas sistem
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Pengaturan lokal Claude Code (jangan ikut dibagikan)
+.claude/settings.local.json
+
+# Log & berkas sementara
+*.log
+tmp/
+.cache/
