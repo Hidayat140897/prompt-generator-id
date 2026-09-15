@@ -1,5 +1,7 @@
 # Prompt Generator
 
+**[→ Coba langsung](https://hidayat140897.github.io/prompt-generator-id/)**
+
 Generator prompt serbaguna untuk **teks & tulisan, coding, gambar, dan video/audio**.
 Berjalan sepenuhnya di browser: tanpa build step, tanpa server, tanpa akun, tanpa database.
 
