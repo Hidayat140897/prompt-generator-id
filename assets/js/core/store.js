@@ -8,7 +8,16 @@
 
   var KEY_SETTINGS = 'pg:settings:v1';
   var KEY_LIBRARY = 'pg:library:v1';
-  var KEY_DRAFT = 'pg:draft:v1';
+  var KEY_DRAFT = 'pg:draft:v1';      // versi lama: satu draf global
+  var KEY_DRAFTS = 'pg:drafts:v1';    // draf per template: { "kategori/template": {values, ts} }
+  var KEY_LAST = 'pg:last:v1';        // template yang terakhir dibuka
+  var KEY_RECENT = 'pg:recent:v1';    // template yang baru dipakai
+  var KEY_FAVTPL = 'pg:favtpl:v1';    // template favorit
+  var KEY_AIHIST = 'pg:aihist:v1';    // riwayat hasil AI
+
+  var MAX_RECENT = 8;
+  var MAX_AIHIST = 20;
+  var MAX_DRAFTS = 60;
 
   var DEFAULTS = {
     theme: 'dark',
@@ -71,9 +80,89 @@
 
   /* -------------------------------- Draft -------------------------------- */
 
-  Store.saveDraft = function (draft) { write(KEY_DRAFT, draft); };
-  Store.loadDraft = function () { return read(KEY_DRAFT, null); };
-  Store.clearDraft = function () { try { localStorage.removeItem(KEY_DRAFT); } catch (e) {} };
+  /* Draf disimpan per template supaya isian tidak hilang saat berpindah. */
+
+  function tkey(catId, tplId) { return catId + '/' + tplId; }
+  Store.tkey = tkey;
+
+  var drafts = read(KEY_DRAFTS, null);
+  if (!drafts) {
+    drafts = {};
+    // Migrasi dari versi lama yang hanya menyimpan satu draf.
+    var old = read(KEY_DRAFT, null);
+    if (old && old.catId && old.tplId) {
+      drafts[tkey(old.catId, old.tplId)] = { values: old.values || {}, ts: Date.now() };
+      write(KEY_DRAFTS, drafts);
+      try { localStorage.removeItem(KEY_DRAFT); } catch (e) {}
+    }
+  }
+
+  Store.saveDraft = function (catId, tplId, values) {
+    drafts[tkey(catId, tplId)] = { values: values, ts: Date.now() };
+    // Buang draf terlama bila sudah terlalu banyak.
+    var keys = Object.keys(drafts);
+    if (keys.length > MAX_DRAFTS) {
+      keys.sort(function (a, b) { return (drafts[a].ts || 0) - (drafts[b].ts || 0); })
+        .slice(0, keys.length - MAX_DRAFTS)
+        .forEach(function (k) { delete drafts[k]; });
+    }
+    write(KEY_DRAFTS, drafts);
+    write(KEY_LAST, { catId: catId, tplId: tplId });
+  };
+
+  Store.loadDraft = function (catId, tplId) {
+    var d = drafts[tkey(catId, tplId)];
+    return d ? d.values : null;
+  };
+
+  Store.lastOpened = function () { return read(KEY_LAST, null); };
+
+  Store.clearDrafts = function () {
+    drafts = {};
+    try { localStorage.removeItem(KEY_DRAFTS); localStorage.removeItem(KEY_LAST); } catch (e) {}
+  };
+
+  /* ------------------- Template: terakhir dipakai & favorit ---------------- */
+
+  Store.recent = read(KEY_RECENT, []);
+
+  Store.touchTemplate = function (catId, tplId) {
+    var k = tkey(catId, tplId);
+    Store.recent = [k].concat(Store.recent.filter(function (x) { return x !== k; })).slice(0, MAX_RECENT);
+    write(KEY_RECENT, Store.recent);
+  };
+
+  Store.favTemplates = read(KEY_FAVTPL, []);
+
+  Store.isFavTemplate = function (catId, tplId) {
+    return Store.favTemplates.indexOf(tkey(catId, tplId)) !== -1;
+  };
+
+  Store.toggleFavTemplate = function (catId, tplId) {
+    var k = tkey(catId, tplId);
+    var i = Store.favTemplates.indexOf(k);
+    if (i === -1) Store.favTemplates.push(k); else Store.favTemplates.splice(i, 1);
+    write(KEY_FAVTPL, Store.favTemplates);
+    return i === -1;
+  };
+
+  /* ---------------------------- Riwayat hasil AI -------------------------- */
+
+  Store.aiHistory = read(KEY_AIHIST, []);
+
+  Store.addAiHistory = function (rec) {
+    rec.id = Store.uid();
+    rec.ts = Date.now();
+    Store.aiHistory.unshift(rec);
+    Store.aiHistory = Store.aiHistory.slice(0, MAX_AIHIST);
+    write(KEY_AIHIST, Store.aiHistory);
+    return rec;
+  };
+
+  Store.clearAiHistory = function () {
+    Store.aiHistory = [];
+    try { localStorage.removeItem(KEY_AIHIST); } catch (e) {}
+  };
 
   /* ------------------------------- Library ------------------------------- */
 
@@ -131,6 +220,19 @@
   };
 
   Store.clearLibrary = function () { Store.library = []; persistLibrary(); };
+
+  /** Hapus seluruh jejak aplikasi di browser ini. */
+  Store.clearAll = function () {
+    Store.clearLibrary();
+    Store.clearDrafts();
+    Store.clearAiHistory();
+    Store.recent = [];
+    Store.favTemplates = [];
+    [KEY_RECENT, KEY_FAVTPL].forEach(function (k) {
+      try { localStorage.removeItem(k); } catch (e) {}
+    });
+    Store.resetSettings();
+  };
 
   /* --------------------------- Ekspor / Impor ---------------------------- */
 

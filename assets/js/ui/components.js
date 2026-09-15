@@ -168,16 +168,33 @@
 
   /* ------------------------------ Toast ---------------------------------- */
 
-  UI.toast = function (msg, kind) {
+  /**
+   * @param {string} msg
+   * @param {string=} kind 'ok' | 'err'
+   * @param {{label:string,onClick:function}=} action tombol aksi, mis. "Urungkan"
+   */
+  UI.toast = function (msg, kind, action) {
     var host = document.getElementById('toasts');
     if (!host) return;
-    var t = el('div', { class: 'toast' + (kind ? ' ' + kind : ''), text: msg });
+    var t = el('div', { class: 'toast' + (kind ? ' ' + kind : '') }, [
+      el('span', { text: msg })
+    ]);
+    if (action) {
+      t.style.pointerEvents = 'auto';
+      t.appendChild(el('button', {
+        class: 'toast-act', text: action.label,
+        onclick: function () { close(); action.onClick(); }
+      }));
+    }
     host.appendChild(t);
-    setTimeout(function () {
+
+    function close() {
+      clearTimeout(timer);
       t.style.transition = 'opacity .25s';
       t.style.opacity = '0';
       setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 260);
-    }, kind === 'err' ? 4200 : 2100);
+    }
+    var timer = setTimeout(close, kind === 'err' ? 4200 : (action ? 6000 : 2100));
   };
 
   /* ------------------------------ Modal ---------------------------------- */

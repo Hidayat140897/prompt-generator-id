@@ -2,15 +2,20 @@
 
 **[→ Coba langsung](https://hidayat140897.github.io/prompt-generator-id/)**
 
-Generator prompt serbaguna untuk **teks & tulisan, coding, gambar, dan video/audio**.
+Generator prompt serbaguna untuk **teks, coding, gambar, video, bisnis, pendidikan,
+analisis data, dan system prompt AI**.
 Berjalan sepenuhnya di browser: tanpa build step, tanpa server, tanpa akun, tanpa database.
 
-- **33 template** siap pakai di 4 kategori
+- **59 template** siap pakai di 8 kategori
 - **5 format output**: Terstruktur (Markdown), XML, Ringkas, JSON, Baris Tunggal
+- **Mode bandingkan** — lihat dua format berdampingan sebelum memilih
+- **Pratinjau bisa disunting** langsung, hasil suntingan ikut tersalin dan tersimpan
+- **Variabel `{{nama}}`** agar satu prompt bisa dipakai ulang untuk banyak kasus
+- **Draf tersimpan per template** — isian tidak hilang saat berpindah-pindah
 - **Skor kualitas** prompt beserta saran perbaikan yang konkret
-- **Pustaka lokal**: simpan, cari, ekspor, impor prompt
+- **Pustaka lokal**: simpan, cari, filter, favoritkan, ekspor, impor
 - **Bagikan lewat tautan** — seluruh isian dikodekan di URL
-- **Penyempurnaan AI opsional** memakai API key milik sendiri (Claude, OpenAI, Gemini, OpenRouter, atau server lokal kompatibel-OpenAI)
+- **Penyempurnaan AI opsional** memakai API key milik sendiri (Claude, OpenAI, Gemini, OpenRouter, atau server lokal kompatibel-OpenAI), lengkap dengan riwayat hasil
 
 ---
 
@@ -66,10 +71,14 @@ assets/js/core/
   ai.js                     Adapter opsional ke penyedia model
 assets/js/data/
   modifiers.js              Pustaka modifier bersama untuk gambar & video
-  text.js                   Kategori Teks & Tulisan  (10 template)
-  code.js                   Kategori Coding & Teknis (9 template)
-  image.js                  Kategori Gambar          (8 template)
-  video.js                  Kategori Video & Audio   (6 template)
+  text.js                   Kategori Teks & Tulisan        (10 template)
+  code.js                   Kategori Coding & Teknis       (9 template)
+  image.js                  Kategori Gambar                (8 template)
+  video.js                  Kategori Video & Audio         (6 template)
+  business.js               Kategori Bisnis & Marketing    (8 template)
+  education.js              Kategori Pendidikan            (6 template)
+  analytics.js              Kategori Data & Analisis       (6 template)
+  system.js                 Kategori System Prompt & Agent (6 template)
 assets/js/ui/
   components.js             Perender field form, modal, toast
   app.js                    Kontroler utama
@@ -127,6 +136,13 @@ Helper tersedia di `PG.h`: `or()` (nilai atau cadangan), `split()` (pecah input 
 Tidak ada langkah lain — sidebar, pencarian, dan pustaka akan langsung mengenalinya.
 
 ---
+
+## Variabel prompt
+
+Tulis `{{nama}}` di field mana pun. Placeholder yang terdeteksi akan muncul sebagai
+panel isian di bawah pratinjau, sehingga satu prompt bisa dipakai berulang kali untuk
+kasus berbeda tanpa mengedit ulang formnya. Placeholder yang dibiarkan kosong tetap
+ditulis apa adanya di hasil akhir.
 
 ## Privasi
 

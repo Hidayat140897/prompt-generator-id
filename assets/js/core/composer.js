@@ -170,6 +170,30 @@
     return Math.max(1, Math.round(text.length / 4));
   };
 
+  /* --------------------------- Variabel prompt ---------------------------- */
+  /* Tulis {{nama}} di field mana pun; nilainya diisi belakangan lewat panel
+     Variabel, sehingga satu prompt bisa dipakai ulang untuk banyak kasus.   */
+
+  var VAR_RE = /\{\{\s*([a-zA-Z0-9_À-ɏ][^{}]{0,60}?)\s*\}\}/g;
+
+  PG.extractVars = function (text) {
+    var seen = {}, out = [], m;
+    VAR_RE.lastIndex = 0;
+    while ((m = VAR_RE.exec(String(text || '')))) {
+      var name = m[1].trim();
+      if (name && !seen[name]) { seen[name] = true; out.push(name); }
+    }
+    return out;
+  };
+
+  PG.applyVars = function (text, map) {
+    if (!map) return text;
+    return String(text || '').replace(VAR_RE, function (full, name) {
+      var v = map[name.trim()];
+      return (v == null || String(v).trim() === '') ? full : String(v);
+    });
+  };
+
   PG.countWords = function (text) {
     if (!text) return 0;
     var m = text.trim().match(/\S+/g);

@@ -16,12 +16,21 @@
       search: '',
       openCats: {},
       editingId: null,
-      lastOutput: ''
+      lastOutput: '',
+      vars: {},          // nilai untuk placeholder {{nama}}
+      edited: null,      // teks hasil suntingan manual pada pratinjau
+      editMode: false,   // pratinjau sedang dalam mode sunting
+      compare: null,     // format pembanding saat mode bandingkan aktif
+      libQuery: '',      // pencarian di dalam pustaka
+      libCat: '',        // filter kategori di pustaka
+      libFav: false      // hanya tampilkan favorit
     }
   };
 
   var dom = {};
   var saveTimer = null;
+  var undoSnapshot = null;
+  var refreshPreview = null;
 
   /* ========================================================================
      Inisialisasi
@@ -71,15 +80,16 @@
     document.addEventListener('keydown', onKey);
     window.addEventListener('hashchange', loadFromUrl);
     window.addEventListener('resize', syncResponsive);
+    window.addEventListener('beforeunload', flushDraft);
 
     renderSidebar();
     syncResponsive();
 
-    // Prioritas pemulihan: URL share > draf terakhir > template pertama.
+    // Prioritas pemulihan: URL share > template terakhir dibuka > template pertama.
     if (!loadFromUrl()) {
-      var d = Store.loadDraft();
-      if (d && PG.getTemplate(d.catId, d.tplId)) {
-        selectTemplate(d.catId, d.tplId, d.values);
+      var last = Store.lastOpened();
+      if (last && PG.getTemplate(last.catId, last.tplId)) {
+        selectTemplate(last.catId, last.tplId);
       } else {
         var first = PG.categories[0];
         if (first && first.templates[0]) selectTemplate(first.id, first.templates[0].id);
@@ -155,6 +165,9 @@
       return;
     }
 
+    shortcutList('Favorit', Store.favTemplates, '★');
+    shortcutList('Terakhir dipakai', Store.recent.slice(0, 5), '');
+
     host.appendChild(el('div', { class: 'side-head', text: 'Kategori' }));
 
     PG.categories.forEach(function (cat) {
@@ -193,6 +206,26 @@
     }, [document.createTextNode('📚  Prompt tersimpan (' + Store.library.length + ')')]));
   }
 
+  /** Daftar pintas di sidebar untuk favorit dan template yang baru dipakai. */
+  function shortcutList(title, keys, mark) {
+    var items = (keys || []).map(function (k) {
+      var p = k.split('/');
+      return PG.getTemplate(p[0], p[1]);
+    }).filter(Boolean);
+    if (!items.length) return;
+
+    dom.sidebar.appendChild(el('div', { class: 'side-head', text: title }));
+    items.forEach(function (t) {
+      var cat = PG.getCategory(t.categoryId);
+      dom.sidebar.appendChild(el('button', {
+        class: 'tpl-btn' + (isActive(t) ? ' active' : ''),
+        title: t.desc || '',
+        'aria-label': cat.name + ' — ' + t.name,
+        onclick: function () { selectTemplate(t.categoryId, t.id); }
+      }, [document.createTextNode((mark ? mark + ' ' : '') + cat.icon + '  ' + t.name)]));
+    });
+  }
+
   function isActive(t) {
     return App.state.catId === t.categoryId && App.state.tplId === t.id;
   }
@@ -206,11 +239,20 @@
     if (!tpl) return;
     var cat = PG.getCategory(catId);
 
+    flushDraft();   // amankan isian template yang sedang ditinggalkan
+
     App.state.catId = catId;
     App.state.tplId = tplId;
-    App.state.values = values ? mergeValues(tpl, values) : PG.defaultValues(tpl);
+    // Tanpa nilai eksplisit, pakai draf terakhir untuk template ini bila ada,
+    // supaya isian tidak hilang saat berpindah-pindah template.
+    var restore = values || Store.loadDraft(catId, tplId);
+    App.state.values = restore ? mergeValues(tpl, restore) : PG.defaultValues(tpl);
     App.state.editingId = null;
+    App.state.edited = null;
+    App.state.vars = {};
+    undoSnapshot = null;
 
+    Store.touchTemplate(catId, tplId);
     if (!S.lockFormat && cat.defaultFormat) S.format = cat.defaultFormat;
 
     renderSidebar();
@@ -243,18 +285,48 @@
       el('p', { text: tpl.desc || '' })
     ]));
 
-    var actions = el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px' }, [
+    var fav = Store.isFavTemplate(App.state.catId, App.state.tplId);
+    var favBtn = el('button', {
+      class: 'btn sm', text: (fav ? '★' : '☆') + ' Favorit',
+      title: 'Sematkan template ini di bagian atas sidebar'
+    });
+    favBtn.addEventListener('click', function () {
+      var on = Store.toggleFavTemplate(App.state.catId, App.state.tplId);
+      favBtn.textContent = (on ? '★' : '☆') + ' Favorit';
+      renderSidebar();
+      UI.toast(on ? 'Ditambahkan ke favorit' : 'Dihapus dari favorit', 'ok');
+    });
+
+    host.appendChild(el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px' }, [
+      favBtn,
       el('button', { class: 'btn sm', text: '🎲 Acak modifier', title: 'Isi acak pilihan gaya untuk memancing ide', onclick: randomize }),
-      el('button', { class: 'btn sm', text: '↺ Kosongkan', onclick: function () {
-        App.state.values = PG.defaultValues(tpl);
-        renderWorkspace(); update();
-      } })
-    ]);
-    host.appendChild(actions);
+      el('button', { class: 'btn sm', text: '↺ Kosongkan', onclick: clearForm })
+    ]));
 
     var form = el('div', {});
     host.appendChild(form);
     UI.renderFields(form, tpl, App.state.values, update);
+  }
+
+  /** Kosongkan form, tapi simpan isian lama agar bisa diurungkan. */
+  function clearForm() {
+    var tpl = currentTemplate();
+    if (!tpl) return;
+    undoSnapshot = JSON.parse(JSON.stringify(App.state.values));
+    App.state.values = PG.defaultValues(tpl);
+    App.state.edited = null;
+    renderWorkspace();
+    update();
+    UI.toast('Form dikosongkan', null, { label: 'Urungkan', onClick: undoClear });
+  }
+
+  function undoClear() {
+    if (!undoSnapshot) { UI.toast('Tidak ada yang bisa diurungkan.', 'err'); return; }
+    App.state.values = undoSnapshot;
+    undoSnapshot = null;
+    renderWorkspace();
+    update();
+    UI.toast('Isian dikembalikan', 'ok');
   }
 
   function randomize() {
@@ -282,7 +354,12 @@
      Perhitungan output
      ======================================================================== */
 
-  function buildCurrent() {
+  /**
+   * Rakit prompt dari state saat ini.
+   * @param {string=} format paksa format tertentu (dipakai mode bandingkan)
+   * @param {boolean=} ignoreEdit abaikan suntingan manual pada pratinjau
+   */
+  function buildCurrent(format, ignoreEdit) {
     var tpl = currentTemplate();
     if (!tpl) return { blocks: {}, output: '' };
     var blocks;
@@ -293,21 +370,39 @@
       return { blocks: {}, output: '⚠️ Gagal merakit prompt: ' + err.message };
     }
     var out = PG.compose(blocks, {
-      format: S.format, lang: S.lang, answerLang: S.answerLang, numbering: S.numbering
+      format: format || S.format, lang: S.lang, answerLang: S.answerLang, numbering: S.numbering
     });
-    return { tpl: tpl, blocks: blocks, output: out };
+    // Suntingan manual menggantikan hasil rakitan, kecuali saat membandingkan.
+    if (!format && !ignoreEdit && App.state.edited != null) out = App.state.edited;
+    var raw = out;
+    out = PG.applyVars(out, App.state.vars);
+    return { tpl: tpl, blocks: blocks, output: out, beforeVars: raw };
   }
 
   function update() {
     var r = buildCurrent();
     App.state.lastOutput = r.output;
     renderPane();
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(function () {
-      Store.saveDraft({ catId: App.state.catId, tplId: App.state.tplId, values: App.state.values });
-    }, 400);
+    scheduleDraftSave();
   }
   App.update = update;
+
+  /* Simpan draf dengan jeda. Target draf dikunci saat dijadwalkan, bukan saat
+     timer berbunyi, supaya isian tidak tertulis ke template yang salah. */
+  function scheduleDraftSave() {
+    clearTimeout(saveTimer);
+    var cat = App.state.catId, tpl = App.state.tplId, vals = App.state.values;
+    if (!cat || !tpl) return;
+    saveTimer = setTimeout(function () { Store.saveDraft(cat, tpl, vals); }, 400);
+  }
+
+  /** Tulis draf sekarang juga, mis. sebelum berpindah template atau menutup tab. */
+  function flushDraft() {
+    clearTimeout(saveTimer);
+    if (App.state.catId && App.state.tplId) {
+      Store.saveDraft(App.state.catId, App.state.tplId, App.state.values);
+    }
+  }
 
   /* ========================================================================
      Panel kanan
@@ -331,15 +426,44 @@
 
     dom.paneBody.appendChild(outputControls());
 
-    var pre = el('div', { class: 'preview' + (out ? '' : ' empty') },
-      [document.createTextNode(out || 'Isi form di sebelah kiri, hasilnya muncul di sini secara langsung.')]);
-    dom.paneBody.appendChild(pre);
+    if (App.state.compare) { renderCompare(); return; }
 
-    dom.paneBody.appendChild(el('div', { class: 'meta-row' }, [
-      el('span', { html: '<b>' + PG.countWords(out) + '</b> kata' }),
-      el('span', { html: '<b>' + out.length + '</b> karakter' }),
-      el('span', { html: '~<b>' + PG.estimateTokens(out) + '</b> token' })
-    ]));
+    var meta = el('div', { class: 'meta-row' });
+    function setMeta(text) {
+      UI.clear(meta);
+      meta.appendChild(el('span', { html: '<b>' + PG.countWords(text) + '</b> kata' }));
+      meta.appendChild(el('span', { html: '<b>' + text.length + '</b> karakter' }));
+      meta.appendChild(el('span', { html: '~<b>' + PG.estimateTokens(text) + '</b> token' }));
+      if (App.state.edited != null) meta.appendChild(el('span', { class: 'badge', text: 'disunting' }));
+    }
+
+    var preview;
+    if (App.state.editMode) {
+      // Mode sunting: teks diubah langsung dan menggantikan hasil rakitan.
+      preview = el('textarea', { class: 'preview', style: 'min-height:320px;resize:vertical' });
+      preview.value = App.state.edited != null ? App.state.edited : buildCurrent(null, true).output;
+      preview.addEventListener('input', function () {
+        App.state.edited = preview.value;
+        setMeta(PG.applyVars(preview.value, App.state.vars));
+      });
+    } else {
+      preview = el('div', { class: 'preview' + (out ? '' : ' empty') },
+        [document.createTextNode(out || 'Isi form di sebelah kiri, hasilnya muncul di sini secara langsung.')]);
+    }
+    dom.paneBody.appendChild(preview);
+
+    dom.paneBody.appendChild(meta);
+    setMeta(out);
+
+    // Dipanggil saat variabel diisi, agar pratinjau segar tanpa merender ulang
+    // panel (supaya fokus ketikan tidak lompat).
+    refreshPreview = function () {
+      var rr = buildCurrent();
+      if (!App.state.editMode) preview.textContent = rr.output;
+      setMeta(rr.output);
+    };
+
+    renderVarPanel(r);
 
     // Engine gambar/video jauh lebih akurat dengan Bahasa Inggris.
     if (r.blocks.raw && /(^|\s)(yang|dengan|dan|dari|sedang|seorang|sebuah|pada|untuk|di|ke)(\s|$)/i.test(r.blocks.raw)) {
@@ -354,10 +478,110 @@
     }
 
     dom.paneFoot.appendChild(el('button', { class: 'btn primary', text: '📋 Salin', onclick: copyOutput }));
+    dom.paneFoot.appendChild(el('button', {
+      class: 'btn' + (App.state.editMode ? ' primary' : ''),
+      text: App.state.editMode ? '✓ Selesai sunting' : '✎ Sunting',
+      title: 'Ubah teks prompt langsung di sini',
+      onclick: function () { App.state.editMode = !App.state.editMode; renderPane(); }
+    }));
+    dom.paneFoot.appendChild(el('button', {
+      class: 'btn', text: '⇄ Bandingkan', title: 'Lihat dua format berdampingan',
+      onclick: function () {
+        App.state.compare = App.state.compare || (S.format === 'structured' ? 'xml' : 'structured');
+        App.state.editMode = false;
+        renderPane();
+      }
+    }));
     dom.paneFoot.appendChild(el('button', { class: 'btn', text: '💾 Simpan', onclick: openSaveDialog }));
     dom.paneFoot.appendChild(el('button', { class: 'btn', text: '⬇ Unduh', onclick: openDownload }));
     dom.paneFoot.appendChild(el('button', { class: 'btn', text: '🔗 Bagikan', onclick: shareLink }));
     dom.paneFoot.appendChild(el('button', { class: 'btn', text: '✨ AI', title: 'Perhalus prompt dengan model AI', onclick: openAiMenu }));
+    if (App.state.edited != null) {
+      dom.paneFoot.appendChild(el('button', {
+        class: 'btn ghost sm', text: '↺ Buang suntingan',
+        title: 'Kembali ke hasil rakitan template',
+        onclick: function () {
+          App.state.edited = null; App.state.editMode = false;
+          renderPane(); UI.toast('Kembali ke hasil rakitan', 'ok');
+        }
+      }));
+    }
+  }
+
+  /* ------------------------------ Variabel ------------------------------- */
+
+  /** Panel pengisi placeholder {{nama}} yang ditemukan di prompt. */
+  function renderVarPanel(r) {
+    var names = PG.extractVars(r.beforeVars || r.output);
+    // Nilai yang sudah terisi tidak lagi muncul di teks, jadi ikut dikumpulkan.
+    Object.keys(App.state.vars).forEach(function (k) {
+      if (names.indexOf(k) === -1 && String(App.state.vars[k] || '').trim() !== '') names.push(k);
+    });
+    if (!names.length) return;
+
+    var box = el('div', { class: 'card', style: 'margin-top:14px;margin-bottom:0' }, [
+      el('h3', { text: 'Variabel (' + names.length + ')' })
+    ]);
+    names.forEach(function (name) {
+      var inp = el('input', { class: 'inp', type: 'text', placeholder: 'nilai untuk ' + name });
+      inp.value = App.state.vars[name] || '';
+      inp.addEventListener('input', function () {
+        App.state.vars[name] = inp.value;
+        if (refreshPreview) refreshPreview();
+      });
+      box.appendChild(UI.field('{{' + name + '}}', inp));
+    });
+    box.appendChild(el('div', { class: 'hint', style: 'margin-top:8px',
+      text: 'Tulis {{nama}} di field mana pun untuk membuat prompt yang bisa dipakai ulang. Placeholder yang belum diisi dibiarkan apa adanya.' }));
+    dom.paneBody.appendChild(box);
+  }
+
+  /* ----------------------------- Bandingkan ------------------------------ */
+
+  function renderCompare() {
+    var a = buildCurrent(S.format);
+    var b = buildCurrent(App.state.compare);
+
+    var pick = el('select', { class: 'inp', onchange: function () { App.state.compare = pick.value; renderPane(); } },
+      PG.FORMATS.map(function (f) { return el('option', { value: f.id, text: f.name }); }));
+    pick.value = App.state.compare;
+
+    dom.paneBody.appendChild(el('div', { style: 'display:flex;align-items:center;gap:8px;margin-bottom:10px' }, [
+      el('span', { class: 'hint', text: 'Bandingkan dengan:' }), pick
+    ]));
+
+    dom.paneBody.appendChild(el('div', { class: 'cmp' }, [
+      el('div', {}, [
+        el('div', { class: 'cmp-head', text: formatName(S.format) + ' (aktif)' }),
+        el('div', { class: 'preview', style: 'min-height:260px' }, [document.createTextNode(a.output)]),
+        el('div', { class: 'meta-row' }, [el('span', { html: '~<b>' + PG.estimateTokens(a.output) + '</b> token' })])
+      ]),
+      el('div', {}, [
+        el('div', { class: 'cmp-head', text: formatName(App.state.compare) }),
+        el('div', { class: 'preview', style: 'min-height:260px' }, [document.createTextNode(b.output)]),
+        el('div', { class: 'meta-row' }, [el('span', { html: '~<b>' + PG.estimateTokens(b.output) + '</b> token' })])
+      ])
+    ]));
+
+    dom.paneFoot.appendChild(el('button', { class: 'btn', text: '← Tutup perbandingan',
+      onclick: function () { App.state.compare = null; renderPane(); } }));
+    dom.paneFoot.appendChild(el('button', { class: 'btn primary', text: '📋 Salin ' + formatName(App.state.compare),
+      onclick: function () {
+        Store.copy(buildCurrent(App.state.compare).output)
+          .then(function () { UI.toast('Tersalin', 'ok'); });
+      } }));
+    dom.paneFoot.appendChild(el('button', { class: 'btn', text: '⇄ Jadikan format aktif',
+      onclick: function () {
+        S.format = App.state.compare; S.lockFormat = true; Store.saveSettings();
+        App.state.compare = null; update();
+        UI.toast('Format aktif diganti', 'ok');
+      } }));
+  }
+
+  function formatName(id) {
+    var n = id;
+    PG.FORMATS.forEach(function (f) { if (f.id === id) n = f.name; });
+    return n;
   }
 
   function outputControls() {
@@ -432,14 +656,28 @@
      ======================================================================== */
 
   function renderLibrary() {
-    var list = Store.library;
-    if (!list.length) {
+    var all = Store.library;
+
+    if (!all.length) {
       dom.paneBody.appendChild(el('div', { class: 'empty-state' }, [
         el('div', { class: 'big', text: '📚' }),
         el('div', { text: 'Belum ada prompt tersimpan.' }),
         el('div', { class: 'hint', style: 'margin-top:6px', text: 'Tekan Simpan di tab Pratinjau untuk menyimpan prompt ke sini.' })
       ]));
     } else {
+      dom.paneBody.appendChild(libraryFilters());
+
+      var list = filterLibrary(all);
+      dom.paneBody.appendChild(el('div', { class: 'hint', style: 'margin:0 2px 10px',
+        text: list.length + ' dari ' + all.length + ' prompt' }));
+
+      if (!list.length) {
+        dom.paneBody.appendChild(el('div', { class: 'empty-state' }, [
+          el('div', { class: 'big', text: '🔍' }),
+          el('div', { text: 'Tidak ada yang cocok dengan filter ini.' })
+        ]));
+      }
+
       var sorted = list.slice().sort(function (a, b) {
         return (b.fav ? 1 : 0) - (a.fav ? 1 : 0) || b.updatedAt - a.updatedAt;
       });
@@ -476,6 +714,58 @@
     } }));
     dom.paneFoot.appendChild(el('button', { class: 'btn', text: '⬇ Impor', onclick: importLibrary }));
     dom.paneFoot.appendChild(el('button', { class: 'btn', text: '← Pratinjau', onclick: function () { App.state.tab = 'preview'; renderPane(); } }));
+  }
+
+  /** Baris pencarian dan filter di atas daftar pustaka. */
+  function libraryFilters() {
+    var q = el('input', { class: 'inp', type: 'search', placeholder: 'Cari nama, tag, atau isi prompt…' });
+    q.value = App.state.libQuery;
+    var t = null;
+    q.addEventListener('input', function () {
+      App.state.libQuery = q.value;
+      clearTimeout(t);
+      t = setTimeout(function () {
+        var pos = q.selectionStart;
+        renderPane();
+        var next = dom.paneBody.querySelector('input[type=search]');
+        if (next) { next.focus(); try { next.setSelectionRange(pos, pos); } catch (e) {} }
+      }, 220);
+    });
+
+    var cats = {};
+    Store.library.forEach(function (p) { cats[p.categoryId] = true; });
+    var sel = el('select', { class: 'inp', onchange: function () { App.state.libCat = sel.value; renderPane(); } },
+      [el('option', { value: '', text: 'Semua kategori' })].concat(
+        Object.keys(cats).map(function (id) {
+          var c = PG.getCategory(id);
+          return el('option', { value: id, text: c ? c.icon + ' ' + c.name : id });
+        })));
+    sel.value = App.state.libCat;
+
+    var favBtn = el('button', {
+      class: 'btn sm' + (App.state.libFav ? ' primary' : ''),
+      text: App.state.libFav ? '★ Favorit' : '☆ Favorit',
+      onclick: function () { App.state.libFav = !App.state.libFav; renderPane(); }
+    });
+
+    return el('div', { style: 'display:flex;flex-direction:column;gap:8px;margin-bottom:10px' }, [
+      q,
+      el('div', { style: 'display:flex;gap:8px' }, [sel, favBtn])
+    ]);
+  }
+
+  function filterLibrary(list) {
+    var q = App.state.libQuery.trim().toLowerCase();
+    var words = q ? q.split(/\s+/) : [];
+    return list.filter(function (p) {
+      if (App.state.libFav && !p.fav) return false;
+      if (App.state.libCat && p.categoryId !== App.state.libCat) return false;
+      if (!words.length) return true;
+      var tpl = PG.getTemplate(p.categoryId, p.templateId);
+      var hay = (p.name + ' ' + (p.tags || []).join(' ') + ' ' + (p.output || '') + ' ' +
+        (tpl ? tpl.name : '')).toLowerCase();
+      return words.every(function (w) { return hay.indexOf(w) !== -1; });
+    });
   }
 
   function confirmDelete(p) {
@@ -683,7 +973,62 @@
               el('div', { class: 'hint', text: a.desc })
             ])
           ]);
-        }))
+        }).concat([
+          el('button', {
+            class: 'btn ghost', style: 'justify-content:flex-start;padding:12px 14px;text-align:left',
+            onclick: function () { closeAll(); openAiHistory(); }
+          }, [
+            el('span', { style: 'font-size:16px', text: '🕘' }),
+            el('span', {}, [
+              el('div', { text: 'Riwayat hasil AI (' + Store.aiHistory.length + ')', style: 'font-weight:700' }),
+              el('div', { class: 'hint', text: 'Buka kembali hasil sebelumnya, termasuk yang belum disimpan.' })
+            ])
+          ])
+        ]))
+    });
+  }
+
+  /** Daftar hasil AI sebelumnya, tersimpan di browser ini (maksimal 20). */
+  function openAiHistory() {
+    if (!Store.aiHistory.length) {
+      UI.modal({
+        title: 'Riwayat hasil AI',
+        body: el('div', { class: 'empty-state' }, [
+          el('div', { class: 'big', text: '🕘' }),
+          el('div', { text: 'Belum ada hasil AI yang tersimpan.' })
+        ])
+      });
+      return;
+    }
+
+    var list = el('div', { style: 'display:flex;flex-direction:column;gap:8px' },
+      Store.aiHistory.map(function (rec) {
+        var act = '';
+        PG.ai.ACTIONS.forEach(function (a) { if (a.id === rec.action) act = a.icon + ' ' + a.name; });
+        return el('div', { class: 'lib-item' }, [
+          el('div', { class: 't', onclick: function () { closeAll(); showAiResult(rec.action, rec.output); } },
+            [el('span', { text: act || rec.action })]),
+          el('div', { class: 's' }, [
+            el('span', { text: rec.template || '—' }),
+            el('span', { text: new Date(rec.ts).toLocaleString('id-ID') }),
+            el('span', { text: PG.countWords(rec.output) + ' kata' })
+          ]),
+          el('div', { class: 'hint', style: 'margin-top:6px;max-height:42px;overflow:hidden',
+            text: String(rec.output || '').slice(0, 160) })
+        ]);
+      }));
+
+    UI.modal({
+      title: 'Riwayat hasil AI',
+      wide: true,
+      body: [el('div', { class: 'hint', text: 'Klik salah satu untuk membukanya kembali.' }), list],
+      actions: [
+        { label: 'Tutup' },
+        { label: 'Hapus riwayat', kind: 'danger', onClick: function () {
+          Store.clearAiHistory();
+          UI.toast('Riwayat AI dihapus');
+        } }
+      ]
     });
   }
 
@@ -707,6 +1052,11 @@
     PG.ai.run(action, prompt, S.ai, tpl ? tpl.name : '')
       .then(function (text) {
         close();
+        Store.addAiHistory({
+          action: action, output: text,
+          template: tpl ? tpl.name : '',
+          categoryId: App.state.catId, templateId: App.state.tplId
+        });
         showAiResult(action, text);
       })
       .catch(function (err) {
@@ -735,6 +1085,13 @@
     ];
 
     if (action === 'refine' || action === 'translate') {
+      acts.push({ label: '✎ Pakai sebagai prompt', onClick: function () {
+        App.state.edited = ta.value;
+        App.state.tab = 'preview';
+        App.state.compare = null;
+        renderPane();
+        UI.toast('Hasil AI dipakai. Tekan "Buang suntingan" untuk kembali ke rakitan template.', 'ok');
+      } });
       acts.push({ label: 'Simpan sebagai prompt baru', kind: 'primary', onClick: function () {
         Store.savePrompt({
           name: (currentTemplate() || {}).name + ' — hasil AI',
@@ -836,7 +1193,7 @@
             actions: [
               { label: 'Batal' },
               { label: 'Hapus semua', kind: 'danger', onClick: function () {
-                Store.clearLibrary(); Store.clearDraft(); Store.resetSettings();
+                Store.clearAll();
                 location.reload();
               } }
             ]
